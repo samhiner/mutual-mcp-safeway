@@ -180,10 +180,15 @@ const TOOLS: Tool[] = [
   {
     name: "safeway_checkout",
     description:
-      "Proceed to checkout with the current cart. Initiates the checkout process using the selected delivery slot.",
+      "Place an order with the current cart using the selected delivery slot. This is a paid/irreversible action. Requires confirm=true to execute; otherwise returns a preview.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        confirm: {
+          type: "boolean",
+          description: "Must be true to actually place the order. Default false returns a preview only.",
+        },
+      },
       required: [],
     },
   },
@@ -361,7 +366,18 @@ async function handleToolCall(name: string, args: unknown) {
     }
 
     case "safeway_checkout": {
+      const a = (args ?? {}) as Record<string, unknown>;
+      if (a.confirm !== true) {
+        return createSuccessContent({
+          preview: true,
+          action: "safeway_checkout",
+          message: "Preview only. No order was placed. Re-call with confirm=true to place the order with the current cart and selected delivery slot.",
+        });
+      }
       const result = await checkout();
+      if (!result.success) {
+        return [{ type: "text" as const, text: JSON.stringify({ success: false, isError: true, error: result.message }, null, 2) }];
+      }
       return createSuccessContent(result);
     }
 

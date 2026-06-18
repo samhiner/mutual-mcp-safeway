@@ -693,26 +693,25 @@ export async function checkout(): Promise<{ success: boolean; orderId?: string; 
       };
     });
 
-    if (confirmation.hasConfirmation || confirmation.orderId) {
+    // Only report success when a REAL order confirmation/ID is present.
+    if (confirmation.orderId) {
       return {
         success: true,
         orderId: confirmation.orderId,
-        message: `Checkout successful! Order ID: ${confirmation.orderId || "pending"}`,
+        message: `Order placed. Order ID: ${confirmation.orderId}`,
       };
     }
-
-    // Check if we're on checkout page (multi-step)
-    const currentUrl = page.url();
-    if (currentUrl.includes("checkout") || currentUrl.includes("payment")) {
+    if (confirmation.hasConfirmation) {
       return {
         success: true,
-        message: "Redirected to checkout page. Please review and complete payment.",
+        message: "Order placed (confirmation displayed, but no order ID could be read). Verify in your Safeway order history.",
       };
     }
 
+    // No real confirmation — the order was NOT placed. Do not claim success.
     return {
-      success: true,
-      message: "Checkout initiated. Please complete any remaining steps.",
+      success: false,
+      message: "No order confirmation was found — the order was NOT placed (checkout may require additional steps such as payment). Verify and complete on safeway.com.",
     };
   } catch (error) {
     throw new Error(`Checkout failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -738,7 +737,7 @@ export async function getOrders(): Promise<Order[]> {
         '[data-testid="order-item"], .order-item, .order-card, .order-history-item'
       );
 
-      return Array.from(orderElements).map((order, index) => {
+      return Array.from(orderElements).map((order) => {
         const orderIdEl = order.querySelector(
           '[data-testid="order-id"], .order-id, .order-number'
         );
@@ -762,7 +761,7 @@ export async function getOrders(): Promise<Order[]> {
         const totalMatch = totalText.match(/[\d.]+/);
 
         return {
-          orderId: orderIdEl?.textContent?.trim() || `order-${index}`,
+          orderId: orderIdEl?.textContent?.trim() || "",
           date: dateEl?.textContent?.trim() || "",
           status: statusEl?.textContent?.trim() || "Unknown",
           total: totalMatch ? parseFloat(totalMatch[0]) : 0,
