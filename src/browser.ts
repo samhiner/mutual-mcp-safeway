@@ -149,13 +149,37 @@ export async function waitForLogin(timeoutSeconds = 240): Promise<{
   });
 
   const before = new Set((await context.cookies().catch(() => [])).map((c) => c.name));
-  const AUTH = ["SWY_SHARED_SESSION", "ABS_SHARED_SESSION", "swyConsumerDirectoryPro", "SWY_SIGNIN"];
+
+  /**
+   * Names Safeway issues **only** to a signed-in visitor.
+   *
+   * Measured rather than guessed: a real sign-in was diffed against a fresh
+   * signed-out profile. Four names that read like proof and are handed to
+   * guests are deliberately absent — `SWY_SHARED_SESSION_INFO`,
+   * `SWY_SYND_USER_INFO`, `ACI_S_abs_previouslogin`, `ACI_S_ECommSignInCount`.
+   */
+  const AUTH = [
+    "SWY_SHARED_SESSION",
+    "SWY_SHARED_PII_SESSION_INFO",
+    "ACI_S_SAFEWAY_KMSI",
+    "ACI_S_USED_CREDENTIALS",
+  ];
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
 
   while (Date.now() < deadline) {
     const cookies = await context.cookies().catch(() => []);
     const gained = cookies.filter((c) => c.value && !before.has(c.name)).map((c) => c.name);
-    if (gained.some((name) => AUTH.some((wanted) => name.startsWith(wanted)))) {
+    /**
+     * Exact, not a prefix.
+     *
+     * `SWY_SHARED_SESSION` is proof of a session and `SWY_SHARED_SESSION_INFO`
+     * is handed to anyone — they differ by a suffix, so `startsWith` matches
+     * the guest cookie and declares success before the user has typed anything.
+     * The delta usually hides that, because the guest cookie is already in the
+     * jar at baseline; on a **fresh profile** the jar starts empty and it does
+     * not. That is the exact condition a first sign-in runs under.
+     */
+    if (gained.some((name) => AUTH.includes(name))) {
       session.isLoggedIn = true;
       const saved = await saveSession();
       return { signedIn: true, gained, message: `Signed in. ${saved} cookies saved.` };

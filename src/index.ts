@@ -316,10 +316,21 @@ async function handleToolCall(name: string, args: unknown) {
   switch (name) {
     case "safeway_wait_for_login": {
       const result = await waitForLogin(Number((args as Record<string, unknown>)?.timeoutSeconds ?? 240));
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        isError: !result.signedIn,
-      };
+      /**
+       * A bare content array, like every other case here.
+       *
+       * The caller does `const content = await handleToolCall(...); return
+       * { content }`, so returning `{ content, isError }` got wrapped a second
+       * time and the client rejected the reply: "Invalid tools/call result:
+       * expected array, received object". The sign-in itself worked — the
+       * browser opened, the user signed in, the cookies were saved — and the
+       * tool still reported an error, which is the worst way for this to fail
+       * because it invites someone to retry a thing that already succeeded.
+       *
+       * `isError` is lost, and that is fine: `signedIn` is in the JSON body,
+       * which is what callers read.
+       */
+      return createSuccessContent(result);
     }
 
     case "safeway_login": {
