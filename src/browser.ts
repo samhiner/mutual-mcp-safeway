@@ -94,7 +94,10 @@ export async function getSession(): Promise<SafewaySession> {
   }
 
   const browser = await chromium.launch({
-    headless: true,
+    // Signing in needs a window to type into. Hardcoded `true` meant the login
+    // tool opened nothing at all — the same defect Uber Eats had, where a
+    // `success: true` came back from a browser nobody could see.
+    headless: process.env.SAFEWAY_HEADLESS !== "false",
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
