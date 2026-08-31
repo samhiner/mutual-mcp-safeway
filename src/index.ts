@@ -24,10 +24,26 @@ import {
   clipCoupon,
   getWeeklyDeals,
   closeSession,
+  waitForLogin,
+  saveSession,
 } from "./browser.js";
 
 // Tool definitions
 const TOOLS: Tool[] = [
+  {
+    name: "safeway_wait_for_login",
+    description:
+      "Open a visible browser at Safeway's sign-in page and wait for the user to sign in themselves, then save the session. Takes no credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        timeoutSeconds: {
+          type: "number",
+          description: "How long to wait for the sign-in to complete (default: 240).",
+        },
+      },
+    },
+  },
   {
     name: "safeway_login",
     description:
@@ -298,6 +314,14 @@ function createSuccessContent(data: unknown) {
 
 async function handleToolCall(name: string, args: unknown) {
   switch (name) {
+    case "safeway_wait_for_login": {
+      const result = await waitForLogin(Number((args as Record<string, unknown>)?.timeoutSeconds ?? 240));
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: !result.signedIn,
+      };
+    }
+
     case "safeway_login": {
       const { email, password } = LoginSchema.parse(args);
       const result = await login(email, password);

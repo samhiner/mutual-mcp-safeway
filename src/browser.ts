@@ -88,6 +88,91 @@ const ALBERTSONS_BASE_URL = "https://www.albertsons.com";
 
 let globalSession: SafewaySession | null = null;
 
+import fs from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
+
+/**
+ * Where the session lives.
+ *
+ * `~/.strider/safeway`, matching what ubereats and amazon use. The other three
+ * Strider servers use `~/.striderlabs/<id>`; there is no pattern to rely on,
+ * which is why mutual records the path per provider rather than deriving it.
+ */
+const SESSION_DIR = nodePath.join(os.homedir(), ".strider", "safeway");
+const COOKIES_FILE = nodePath.join(SESSION_DIR, "cookies.json");
+
+export function loadCookies(): unknown[] | null {
+  try {
+    if (!fs.existsSync(COOKIES_FILE)) return null;
+    return JSON.parse(fs.readFileSync(COOKIES_FILE, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Never throws: losing a session is bad, losing the call that made it is worse. */
+export async function saveSession(): Promise<number> {
+  try {
+    if (!globalSession) return 0;
+    const cookies = await globalSession.context.cookies();
+    fs.mkdirSync(SESSION_DIR, { recursive: true });
+    fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies, null, 2));
+    return cookies.length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Open the sign-in page and wait for the user to sign in themselves.
+ *
+ * Takes no credentials. `safeway_login` requires an email and a password
+ * through the tool call, which would mean routing a password through whatever
+ * drives the server; this opens a window and lets the person type into the site.
+ *
+ * It waits for a cookie that *arrives* rather than one that exists. Sites hand
+ * anonymous visitors session-shaped cookies too — Target's `login-session` is
+ * issued to guests — so presence proves nothing and only the delta does.
+ */
+export async function waitForLogin(timeoutSeconds = 240): Promise<{
+  signedIn: boolean;
+  gained: string[];
+  message: string;
+}> {
+  const session = await getSession();
+  const { context, page } = session;
+
+  await page.goto(`${SAFEWAY_BASE_URL}/account/sign-in.html`, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
+
+  const before = new Set((await context.cookies().catch(() => [])).map((c) => c.name));
+  const AUTH = ["SWY_SHARED_SESSION", "ABS_SHARED_SESSION", "swyConsumerDirectoryPro", "SWY_SIGNIN"];
+  const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
+
+  while (Date.now() < deadline) {
+    const cookies = await context.cookies().catch(() => []);
+    const gained = cookies.filter((c) => c.value && !before.has(c.name)).map((c) => c.name);
+    if (gained.some((name) => AUTH.some((wanted) => name.startsWith(wanted)))) {
+      session.isLoggedIn = true;
+      const saved = await saveSession();
+      return { signedIn: true, gained, message: `Signed in. ${saved} cookies saved.` };
+    }
+    await page.waitForTimeout(2500);
+  }
+
+  // The names that did arrive are reported either way: if the list above is
+  // wrong, one run is enough to see what it should have been.
+  const cookies = await context.cookies().catch(() => []);
+  return {
+    signedIn: false,
+    gained: cookies.filter((c) => !before.has(c.name)).map((c) => c.name),
+    message: "Timed out waiting for sign-in. The browser is still open — call this again once signed in.",
+  };
+}
+
 export async function getSession(): Promise<SafewaySession> {
   if (globalSession) {
     return globalSession;
@@ -107,13 +192,31 @@ export async function getSession(): Promise<SafewaySession> {
     ],
   });
 
+  /**
+   * No fingerprint overrides.
+   *
+   * This claimed a macOS Chrome 120 user agent and an America/Los_Angeles
+   * timezone on whatever machine it ran on. patchright's whole purpose is to
+   * look like a real browser, and a browser that says it is a Mac in
+   * California while its TLS, fonts, screen and clock say otherwise is easier
+   * to spot, not harder. The same override was removed from the other four
+   * forks after it ran into a press-and-hold check.
+   */
   const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     viewport: { width: 1280, height: 800 },
-    locale: "en-US",
-    timezoneId: "America/Los_Angeles",
   });
+
+  /**
+   * Reload a saved session, if there is one.
+   *
+   * Without this the server persisted nothing whatsoever, so a sign-in lived
+   * exactly as long as the process that made it and every restart began signed
+   * out — with no error to say so, just an empty result from every search.
+   */
+  const saved = loadCookies();
+  if (saved?.length) {
+    await context.addCookies(saved as Parameters<typeof context.addCookies>[0]);
+  }
 
   const page = await context.newPage();
 
