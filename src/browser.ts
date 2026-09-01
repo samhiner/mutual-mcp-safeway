@@ -164,6 +164,31 @@ export async function waitForLogin(timeoutSeconds = 240): Promise<{
     "ACI_S_SAFEWAY_KMSI",
     "ACI_S_USED_CREDENTIALS",
   ];
+  /**
+   * Already signed in: save what is there and say so, rather than waiting.
+   *
+   * Presence, not the delta, and the two answer different questions. The delta
+   * exists because this site hands anonymous visitors session-shaped cookies —
+   * `SWY_SHARED_SESSION_INFO` among them — so a name proves nothing on its own.
+   * But the four in `AUTH` are verified absent while logged out, so one sitting
+   * in the jar as the window opens is the strongest evidence there is.
+   *
+   * Measured: running this against a live session waited the full timeout and
+   * then reported "Timed out waiting for sign-in", which invites someone to
+   * sign in again to fix a thing that is not broken.
+   */
+  const already = (await context.cookies().catch(() => []))
+    .filter((c) => c.value && AUTH.includes(c.name))
+    .map((c) => c.name);
+  if (already.length) {
+    const saved = await saveSession();
+    return {
+      signedIn: true,
+      gained: already,
+      message: `Already signed in. ${saved} cookies saved; nothing to do.`,
+    };
+  }
+
   const deadline = Date.now() + Math.max(30, timeoutSeconds) * 1000;
 
   while (Date.now() < deadline) {
